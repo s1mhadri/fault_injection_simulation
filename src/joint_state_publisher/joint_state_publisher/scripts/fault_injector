@@ -1,0 +1,370 @@
+#!/usr/bin/env python
+import rospy
+from random import random, uniform, randint, choice
+import time
+import yaml
+from sensor_msgs.msg import JointState
+from std_msgs.msg import Float64
+from std_msgs.msg import Int32
+from std_msgs.msg import Time
+from rosgraph_msgs.msg import Log
+import csv
+from datetime import datetime
+import tf
+
+
+failure_score = [0.01]
+fault_history = []
+time_stamp_list = []
+fault_start_index = None
+fault_end_index = None
+shared_data = None
+startfault = True
+startdur = 1000
+ctrl_fail = False
+
+
+def callback_FI(
+    data, joint_index, fault_amplitude, fault_duration, start_time, act_state, f_type
+):
+    joint_values = data
+    now = rospy.get_time()
+    global startfault
+    global startdur
+
+    def inject_fault():
+        fault_flag = Int32()
+        fault_flag.data = 1
+
+        joint_faulty_values = list(joint_values.position)
+        # joint_faulty_values = list(joint_values.velocity)
+
+        if f_type == "noise":
+            joint_faulty_values[joint_index] += uniform(
+                -fault_amplitude, fault_amplitude
+            )  # noise injection
+        else:
+            joint_faulty_values[joint_index] += fault_amplitude  # spike injection
+
+        joint_values.position = tuple(joint_faulty_values)
+        # joint_values.velocity = tuple(joint_faulty_values)
+
+        rospy.logwarn_once("fault was injected")
+        pub.publish(joint_values)
+        injector_pub.publish(fault_flag)
+        time.sleep(0.01)
+
+    # check if injection is time or action
+    if inject_type == "action":
+        # get the start time at the beginning of the specific action
+        if shared_data != None and shared_data == act_state:
+            if startfault:
+                startdur = now
+                startfault = False
+    else:   # injection_type: time
+        # get the start time at the beginning of first action
+        if shared_data != None and shared_data == 1:
+            if startfault:
+                startdur = now + start_time
+                startfault = False
+    if now > startdur and now < startdur + fault_duration:
+        inject_fault()
+
+    elif now >= startdur + fault_duration:
+        fault_flag = Int32()
+        fault_flag.data = 0
+        rospy.logwarn_once("fault is ended")
+        pub.publish(joint_values)
+        injector_pub.publish(fault_flag)
+        time.sleep(0.01)
+    else:
+        fault_flag = Int32()
+        fault_flag.data = 0
+        pub.publish(joint_values)
+        injector_pub.publish(fault_flag)
+        time.sleep(0.01)
+
+    if shared_data != None and shared_data >= 1 and shared_data <= 9:
+        failure_type = Int32()
+        if abs(joint_values.velocity[0]) > 0.5:
+            rospy.logwarn_once("acceleration")
+            rospy.logwarn_once("acceleration from 0")
+            failure_type.data = 2
+            failure_pub.publish(failure_type)
+        elif abs(joint_values.velocity[1]) > 0.4:
+            rospy.logwarn_once("acceleration")
+            rospy.logwarn_once("acceleration from 1")
+            failure_type.data = 2
+            failure_pub.publish(failure_type)
+        elif abs(joint_values.velocity[2]) > 0.55:
+            rospy.logwarn_once("acceleration")
+            rospy.logwarn_once("acceleration from 2")
+            failure_type.data = 2
+            failure_pub.publish(failure_type)
+        elif abs(joint_values.velocity[3]) > 0.4:
+            rospy.logwarn_once("acceleration")
+            rospy.logwarn_once("acceleration from 3")
+            failure_type.data = 2
+            failure_pub.publish(failure_type)
+        elif abs(joint_values.velocity[4]) > 0.35:
+            rospy.logwarn_once("acceleration")
+            rospy.logwarn_once("acceleration from 4")
+            failure_type.data = 2
+            failure_pub.publish(failure_type)
+        elif abs(joint_values.velocity[5]) > 0.45:
+            rospy.logwarn_once("acceleration")
+            rospy.logwarn_once("acceleration from 5")
+            failure_type.data = 2
+            failure_pub.publish(failure_type)
+        elif abs(joint_values.velocity[6]) > 0.8:
+            rospy.logwarn_once("acceleration")
+            rospy.logwarn_once("acceleration from 6")
+            failure_type.data = 2
+            failure_pub.publish(failure_type)
+        elif abs(joint_values.velocity[7]) > 0.3:
+            rospy.logwarn_once("acceleration")
+            rospy.logwarn_once("acceleration from 7")
+            failure_type.data = 2
+            failure_pub.publish(failure_type)
+        elif ctrl_fail:
+            failure_type.data = 1
+            rospy.logwarn_once("controller failure")
+            failure_pub.publish(failure_type)
+        else:
+            failure_type = Int32()
+            failure_type.data = 0
+            failure_pub.publish(failure_type)
+    else:
+        failure_type = Int32()
+        failure_type.data = 0
+        failure_pub.publish(failure_type)
+
+
+def callback_out(msg):
+    global ctrl_fail
+    
+    if ("ABORTED" in msg.msg):   # (msg.name == "/move_group")
+        ctrl_fail = True
+    elif ("SUCCEEDED" in msg.msg) or (msg.msg == "START EXECUTION"):
+        ctrl_fail = False
+    
+    if msg.level == rospy.WARN:
+        global time_stamp_list
+        global fault_start_index
+        global fault_end_index
+        global failure_score
+
+        if msg.msg == "START PLANNING":
+            planner_flag = Int32()
+            planner_flag.data = 1
+            planner_pub.publish(planner_flag)
+            value = msg.header.stamp.to_sec()
+            time_stamp_list.append(value)
+
+        elif msg.msg == "START EXECUTION":
+            planner_flag = Int32()
+            planner_flag.data = 0
+            planner_pub.publish(planner_flag)
+            value = msg.header.stamp.to_sec()
+            time_stamp_list.append(value)
+
+        elif msg.msg == "fault was injected":
+            value1 = msg.header.stamp.to_sec()
+            time_stamp_list.append(value1)
+            fault_start_index = time_stamp_list.index(value1)
+
+        elif msg.msg == "fault is ended":
+            value2 = msg.header.stamp.to_sec()
+            time_stamp_list.append(value2)
+            fault_end_index = time_stamp_list.index(value2)
+
+        elif msg.msg == "thrown away":
+            failure_score.append(6)
+
+        elif msg.msg == "collision":
+            failure_score.append(5)
+
+        elif msg.msg == "doesnt lose":
+            failure_score.append(4)
+
+        elif msg.msg == "doesnt pick":
+            failure_score.append(3)
+
+        elif msg.msg == "acceleration":
+            failure_score.append(2)
+        
+        elif msg.msg == "controller failure":
+            failure_score.append(1)
+
+        elif msg.msg == "round end":
+            value = msg.header.stamp.to_sec()
+            time_stamp_list.append(value)
+
+            pair = (fault_start_index, fault_end_index)
+            rospy.logerr_once(pair)
+
+            for i in range(0, 20, 2):
+                if pair == (i, i + 1):
+                    fault_history.append((i + 2) / 2)
+                    fault_history.append(1)
+
+                    fault_history.append(max(failure_score))
+
+                    with open(
+                        "/home/simha/fault_injection_simulation/my_list.csv",
+                        "a+",
+                        newline="",
+                    ) as file:
+                        writer = csv.writer(file)
+                        writer.writerow(fault_history)
+                    rospy.logerr_once("fault action is %d", (i + 2) / 2)
+
+                    rospy.logerr(fault_history)
+
+                elif (
+                    pair == (i, i + 2)
+                    or pair == (i, i + 3)
+                    or pair == (i, i + 4)
+                    or pair == (i, i + 5)
+                    or pair == (i, i + 6)
+                    or pair == (i, i + 7)
+                    or pair == (i, i + 8)
+                    or pair == (i, i + 9)
+                    or pair == (i, i + 10)
+                    or pair == (i + 1, i + 3)
+                    or pair == (i + 1, i + 4)
+                    or pair == (i + 1, i + 5)
+                    or pair == (i + 1, i + 6)
+                    or pair == (i + 1, i + 7)
+                    or pair == (i + 1, i + 8)
+                    or pair == (i + 1, i + 9)
+                    or pair == (i + 1, i + 10)
+                ):
+                    fault_history.append((i + 2) / 2)  # fault activity
+                    fault_history.append(0)  # fault phase
+
+                    fault_history.append(max(failure_score))  # failure score
+
+                    with open(
+                        "/home/simha/fault_injection_simulation/my_list.csv",
+                        "a+",
+                        newline="",
+                    ) as file:
+                        writer = csv.writer(file)
+                        writer.writerow(fault_history)
+                    rospy.logerr_once("fault action is %d", (i + 2) / 2)
+                    rospy.logerr(fault_history)
+
+
+def callback(data):
+    global shared_data
+    shared_data = data.data
+
+
+def listener():
+    rospy.init_node("fault_injector", anonymous=True)
+
+    f_path = "/home/simha/fault_injection_simulation/fault_config.yaml"
+    with open(f_path, "r") as stream:
+        params = yaml.safe_load(stream)
+
+    global f_type
+    f_type = params["fault_type"]  # spike and noise
+    global inject_type
+    inject_type = params["inject_type"]  # action and time
+    global action_states
+    action_states = params["action_states"]
+    global fault_duration_min
+    fault_duration_min = params["fault_duration_min"]
+    global fault_duration_max
+    fault_duration_max = params["fault_duration_max"]
+    global fault_amplitude_min
+    fault_amplitude_min = params["fault_amplitude_min"]
+    global fault_amplitude_max
+    fault_amplitude_max = params["fault_amplitude_max"]
+    start_time_min = params["start_time_min"]
+    start_time_max = params["start_time_max"]
+    global joint_names
+    joint_names = params["joint_names"]
+    global joint_values
+    joint_values = {
+        joint_name: 0.0 for joint_name in joint_names
+    }  # Initial joint positions
+
+    # clip to 3 decimal places
+
+    x_coord = round(rospy.get_param("x_start"), 3)
+    y_coord = round(rospy.get_param("y_start"), 3)
+    x_final = round(rospy.get_param("x_final"), 3)
+    y_final = round(rospy.get_param("y_final"), 3)
+
+    global pub
+    global injector_pub
+    global planner_pub
+    global failure_pub
+
+    pub = rospy.Publisher("faulty_joint_states", JointState, queue_size=100)
+    injector_pub = rospy.Publisher("fault_flag", Int32, queue_size=100)
+    planner_pub = rospy.Publisher("planner_flag", Int32, queue_size=100)
+    failure_pub = rospy.Publisher("failure_type_robot", Int32, queue_size=10)
+
+    # Generate a random fault duration
+    fault_duration = (
+        round(uniform(fault_duration_min, fault_duration_max) * 1000) / 1000
+    )
+
+    # Generate a random joint for the fault injection
+    joint_index = int(choice(joint_names)[-1]) - 1
+
+    # Generate a random fault amplitude
+    fault_amplitude = uniform(fault_amplitude_min, fault_amplitude_max)
+
+    # Generate a random start time for the fault injection
+    # start time is counted from the beginning of the first action
+    start_time = round(uniform(start_time_min, start_time_max) * 1000) / 1000
+
+    # Generate a random action state for the fault injection
+    # act_state = randint(5, 5)
+    act_state = choice(action_states)
+
+    global fault_history
+    fault_history.append(datetime.now().strftime("%Y-%m-%d-%H-%M-%S"))
+    fault_history.append(f"type:{f_type}")
+    fault_history.append(f"inj_type:{inject_type}")
+    fault_history.append([x_coord, y_coord, x_final, y_final])
+    fault_history.append(f"st:{start_time}")
+    fault_history.append(joint_index)  # for bias or noise fault
+    fault_history.append(fault_amplitude)
+    fault_history.append(fault_duration)
+
+    rospy.logwarn_once("fault_duration is %s", fault_duration)
+    rospy.logwarn_once("fault_location is %s", joint_index)
+    rospy.logwarn_once("fault_amplitude is %s", fault_amplitude)
+    rospy.logwarn_once("start_time is %s", start_time)
+    rospy.logwarn_once("action state is %s", act_state)
+
+    rospy.Subscriber(
+        "/joint_states",
+        JointState,
+        lambda data: callback_FI(
+            data,
+            joint_index,
+            fault_amplitude,
+            fault_duration,
+            start_time,
+            act_state,
+            f_type,
+        ),
+    )
+    rospy.Subscriber("/action_states", Int32, callback)
+    rospy.Subscriber("/rosout", Log, callback_out)
+
+    rospy.spin()
+
+
+if __name__ == "__main__":
+    try:
+        listener()
+
+    except rospy.ROSInterruptException:
+        pass
