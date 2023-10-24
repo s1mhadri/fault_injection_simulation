@@ -27,6 +27,10 @@ This source code works as a environment playground for franka emika panda robot 
 - [fault_config](fault_config.yaml): configuration file for fault injection
 - [pipeline](pipeline.sh): bash script to run the pipeline
 
+## Scenario
+
+![Scenario](Images/ros-gazebo model.png)
+
 # Quick Start
 
 ## Requirements
