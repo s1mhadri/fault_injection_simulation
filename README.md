@@ -29,7 +29,7 @@ This source code works as a environment playground for franka emika panda robot 
 
 ## Scenario
 
-![Scenario](Images/ros-gazebo model.png)
+![Scenario](Images/scenario.png)
 
 # Quick Start
 
