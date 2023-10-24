@@ -33,9 +33,6 @@ This source code works as a environment playground for franka emika panda robot 
 
 # Quick Start
 
-## Requirements
-- `pip3 install -r requirements.txt`
-
 ## build
 
 `catkin build -j4 -DCMAKE_BUILD_TYPE=Release -DFranka_DIR:PATH=~/libfranka/build`
